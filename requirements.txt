@@ -1,0 +1,10 @@
+streamlit
+numpy
+pandas
+scipy
+matplotlib
+statsmodels
+scikit-learn
+openpyxl
+io
+contextlib
