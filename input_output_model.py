@@ -1,5 +1,5 @@
 #%%
-
+import os
 import pandas as pd
 import numpy as np
 
@@ -34,45 +34,112 @@ def create_demand_shock(shock_dict, sector_list):
     return delta_Y
 
 #%%
-def simulate_demand_shock(L_inverse, delta_Y, A_m, sector_list, remuneration_array, NPT_array, DFA_array, OS_array, total_value_added_array):
-    delta_X = np.dot(L_inverse, delta_Y)
+def simulate_demand_shock(L_inverse, delta_Y, A_d, A_m, sector_list, remuneration_array, NPT_array, DFA_array, OS_array, total_value_added_array):
 
-    # Wrap in a pandas Series for readability
-    delta_X_series = pd.Series(delta_X, index=sector_list, name='Total Output Impact')
+    I = np.identity(len(sector_list))
 
-    # Calculate how much of that output growth leaks overseas to buy foreign parts
-    # Delta_M = A_m * Delta_X
-    delta_M = np.dot(A_m, delta_X)
+    # Calculate the "Deep Supply Chain" matrix: L - I - A
+    deep_supply_chain_matrix = L_inverse - I - A_d
 
-    # Wrap in a pandas Series
-    delta_M_series = pd.Series(delta_M, index=sector_list, name='Import Leakage')
+    ## ==========================================
+    ## 1. TOTAL OUTPUT DECOMPOSITION
+    ## ==========================================
+    delta_X_total = np.dot(L_inverse, delta_Y)
+    delta_X_tier1 = delta_Y  # Direct
+    delta_X_tier2 = np.dot(A_d, delta_Y) # 1st Wave
+    delta_X_tier3 = np.dot(deep_supply_chain_matrix, delta_Y) # Deep Supply Chain
 
-    # Domestic Value Add Series
-    delta_DC_series = pd.Series(delta_X-delta_M, index = sector_list, name = "Domestic Content Impact")
-    
-    ## Calculating changes in Total Value Added
+    ## ==========================================
+    ## 2. IMPORT LEAKAGE DECOMPOSITION
+    ## ==========================================
+    delta_M_total = np.dot(A_m, delta_X_total)
+    delta_M_tier2 = np.dot(A_m, delta_Y) # Imports to make the direct goods
+    delta_M_tier3 = np.dot(A_m, delta_X_tier3) # Imports to make the deep supply chain goods
 
-    delta_TVA = np.dot(total_value_added_array, delta_X)
+    ## ==========================================
+    ## 3. VALUE ADDED (GDP) DECOMPOSITION
+    ## ==========================================
+    delta_VA_total = np.dot(total_value_added_array, delta_X_total)
+    delta_VA_tier1 = np.dot(total_value_added_array, delta_Y) # VA from direct production
+    delta_VA_tier2 = np.dot(total_value_added_array, delta_X_tier2) # VA from 1st wave suppliers
+    delta_VA_tier3 = np.dot(total_value_added_array, delta_X_tier3) # VA from deep supply chain
 
-    delta_TVA_series = pd.Series(delta_TVA, index = sector_list, name = "Total Change in Value Added")
+    ## ==========================================
+    ## 4. VA COMPONENTS (Total and Decomposed)
+    ## ==========================================
+    delta_remuneration = np.dot(remuneration_array, delta_X_total)
+    delta_remuneration_tier1 = np.dot(remuneration_array, delta_Y)
+    delta_remuneration_tier2 = np.dot(remuneration_array, delta_X_tier2)
+    delta_remuneration_tier3 = np.dot(remuneration_array, delta_X_tier3)
 
-    ## Calculating changes in 4 components of value added
-    delta_remuneration = np.dot(remuneration_array, delta_X)
-    delta_NPT = np.dot(NPT_array, delta_X)
-    delta_DFA = np.dot(DFA_array, delta_X)
-    delta_OS = np.dot(OS_array, delta_X)
+    delta_NPT = np.dot(NPT_array, delta_X_total)
+    delta_NPT_tier1 = np.dot(NPT_array, delta_Y)
+    delta_NPT_tier2 = np.dot(NPT_array, delta_X_tier2)
+    delta_NPT_tier3 = np.dot(NPT_array, delta_X_tier3)
 
-    delta_remuneration_series = pd.Series(delta_remuneration, index = sector_list, name = "Change in Remuneration of Employees")
-    delta_NPT_series = pd.Series(delta_NPT, index = sector_list, name = "Change in Net Production Tax Paid")
-    delta_DFA_series = pd.Series(delta_DFA, index = sector_list, name = "Change in Depreciation of Fixed Assets")
-    delta_OS_series = pd.Series(delta_OS, index = sector_list, name = "Change in Operating Surplus")
+    delta_DFA = np.dot(DFA_array, delta_X_total)
+    delta_DFA_tier1 = np.dot(DFA_array, delta_Y)
+    delta_DFA_tier2 = np.dot(DFA_array, delta_X_tier2)
+    delta_DFA_tier3 = np.dot(DFA_array, delta_X_tier3)
 
-    
-    # Combine the results into a clean table
-    results_df = pd.concat([delta_X_series, delta_M_series, delta_DC_series, delta_remuneration_series, delta_NPT_series, delta_DFA_series, delta_OS_series, delta_TVA_series], axis=1)
+    delta_OS = np.dot(OS_array, delta_X_total)
+    delta_OS_tier1 = np.dot(OS_array, delta_Y)
+    delta_OS_tier2 = np.dot(OS_array, delta_X_tier2)
+    delta_OS_tier3 = np.dot(OS_array, delta_X_tier3)
+
+    ## ==========================================
+    ## ASSEMBLE MAIN DATAFRAME (Clean Summary)
+    ## ==========================================
+    results_df = pd.concat([
+        pd.Series(delta_X_total, index=sector_list, name='Total Output Impact'),
+        pd.Series(delta_M_total, index=sector_list, name='Total Import Leakage'),
+        pd.Series(delta_X_total - delta_M_total, index=sector_list, name="Domestic Content Impact"),
+        pd.Series(delta_VA_total, index=sector_list, name="Total Change in Value Added"),
+        pd.Series(delta_remuneration, index=sector_list, name="Change in Remuneration"),
+        pd.Series(delta_NPT, index=sector_list, name="Change in Taxes"),
+        pd.Series(delta_DFA, index=sector_list, name="Change in Depreciation"),
+        pd.Series(delta_OS, index=sector_list, name="Change in Operating Surplus")
+        
+    ], axis=1)
     results_df.loc['Total'] = results_df.sum(numeric_only=True)
 
-    return results_df
+    ## ==========================================
+    ## ASSEMBLE DECOMPOSITION DATAFRAME (The Deep Dive)
+    ## ==========================================
+    direct_indirect_df = pd.concat([
+        # Output Tiers
+        pd.Series(delta_X_tier1, index=sector_list, name="Output: Direct (Initial Shock)"),
+        pd.Series(delta_X_tier2, index=sector_list, name="Output: 1st Wave (Immediate Suppliers)"),
+        pd.Series(delta_X_tier3, index=sector_list, name="Output: 2nd+ Wave (Deep Supply Chain)"),
+        # Import Tiers
+        pd.Series(delta_M_tier2, index=sector_list, name="Imports: 1st Wave"),
+        pd.Series(delta_M_tier3, index=sector_list, name="Imports: 2nd+ Wave"),
+        # GDP Tiers
+        pd.Series(delta_VA_tier1, index=sector_list, name="Value Added: Direct"),
+        pd.Series(delta_VA_tier2, index=sector_list, name="Value Added: 1st Wave"),
+        pd.Series(delta_VA_tier3, index=sector_list, name="Value Added: 2nd+ Wave"),
+        # Remuneration Tiers
+        pd.Series(delta_remuneration_tier1, index=sector_list, name="Remuneration: Direct"),
+        pd.Series(delta_remuneration_tier2, index=sector_list, name="Remuneration: 1st Wave"),
+        pd.Series(delta_remuneration_tier3, index=sector_list, name="Remuneration: 2nd+ Wave"),
+        # Net Production Tax Tiers
+        pd.Series(delta_NPT_tier1, index=sector_list, name="NPT: Direct"),
+        pd.Series(delta_NPT_tier2, index=sector_list, name="NPT: 1st Wave"),
+        pd.Series(delta_NPT_tier3, index=sector_list, name="NPT: 2nd+ Wave"), 
+        # Depreciation of Fixed Asset
+        pd.Series(delta_DFA_tier1, index=sector_list, name="DFA: Direct"),
+        pd.Series(delta_DFA_tier2, index=sector_list, name="DFA: 1st Wave"),
+        pd.Series(delta_DFA_tier3, index=sector_list, name="DFA: 2nd+ Wave"),
+        # Operating Surplus
+        pd.Series(delta_OS_tier1, index=sector_list, name="OS: Direct"),
+        pd.Series(delta_OS_tier2, index=sector_list, name="OS: 1st Wave"),
+        pd.Series(delta_OS_tier3, index=sector_list, name="OS: 2nd+ Wave")
+    ], axis=1)
+    direct_indirect_df.loc['Total'] = direct_indirect_df.sum(numeric_only=True)
+
+    return results_df, direct_indirect_df    
+
+
     
 
 
@@ -149,14 +216,25 @@ def simulate_targeted_price_shock(L_inverse, A_m, value_added_df, import_price_s
 
     # 4. Total direct cost push
     total_direct_push = import_push + total_primary_push
+    delta_P_direct_series = pd.Series(total_direct_push, index = sector_list, name = "Direct Price Changes")
 
     # 5. Apply the Leontief Inverse to get the final domestic price changes
     delta_P = np.dot(L_inverse_T, total_direct_push)
+    delta_P_series = pd.Series(delta_P, index = sector_list, name = "Total Price Changes (%)")
+
+    # 6. Calculate indirect price changes
+    delta_P_indirect = delta_P - total_direct_push
+    delta_P_indirect_series = pd.Series(delta_P_indirect, index = sector_list, name = "Indirect Price Changes")
 
     # Convert back to percentage points for display
     domestic_price_pctchanges = delta_P * 100
 
-    return pd.Series(domestic_price_pctchanges, index=sector_list, name="Targeted Price Changes (%)")
+    results_df = pd.concat([
+        100*delta_P_series, 100*delta_P_direct_series, 100*delta_P_indirect_series
+        
+    ], axis=1)
+
+    return results_df
 
 #%%
 
