@@ -15,6 +15,7 @@ from input_output_model import (
 st.set_page_config(page_title="Input Output Analysis App", layout="wide")
 st.title("China Input Output Analysis Engine")
 st.markdown("Use China's 2023 Input Output data to forecast the impacts of demand and price shocks.")
+st.markdown("Data is taken from China's National Bureau of Statistics 2023 Input Output database. Feel free to download the formatted input output table below for your own reference.")
 
 # --- CATEGORIZATION FRAMEWORK ---
 # Used to organize the sidebar inputs
@@ -188,7 +189,7 @@ for category, sectors in sector_categories.items():
 
 
 # Add a run button so the math doesn't recalculate on every single keystroke
-run_simulation = st.sidebar.button("🚀 Run Demand Simulation", type="primary", use_container_width=True)
+run_demand_sim = st.sidebar.button("🚀 Run Demand Simulation", type="primary", use_container_width=True)
 
 st.sidebar.divider() # Visual separator
 
@@ -263,7 +264,7 @@ with st.sidebar.popover("📦 Imported Input Prices"):
                     with cols[1]:
                         val = st.number_input(
                             label=sector, label_visibility="collapsed", 
-                            min_value=-100.0, max_value=500.0, value=0.0, step=1.0, 
+                            min_value=-500.0, max_value=1000.0, value=0.0, step=1.0, 
                             key=f"import_price_{sector}"
                         )
                         import_price_shock_dict[sector] = val
@@ -278,50 +279,77 @@ st.sidebar.divider() # Visual separator
 st.sidebar.header("🔗 Linkages")
 st.sidebar.markdown("Explore industry connections")
 
-
 show_linkages = st.sidebar.button("🔗 Generate Table", type="primary", use_container_width=True)
 filtered = st.sidebar.checkbox("Show only above-average linkages")
 
 # ==========================================
+# SIDEBAR 4: Input Output Spreadsheet Download
+# ==========================================
+st.sidebar.divider() # Visual separator
+
+with open(file_path, "rb") as f:
+    excel_data = f.read()
+
+# 2. Add the download button widget
+st.sidebar.download_button(
+    label="📥 Download Formatted Input Output Table",
+    data=excel_data,
+    file_name="China_2023_input_output_table.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
+
+# ==========================================
 # EXECUTE SIMULATION (Triggered by button)
 # ==========================================
-if run_simulation:
-    st.subheader("Simulation Results (in Billions RMB)")
-    
-    # 1. Convert the UI dictionary into the numpy array using your function
-    delta_Y = create_demand_shock(shock_dict, sector_list)
-    
-    # 2. Run your simulation function
-    results_df = simulate_demand_shock(
-        L_inverse_df, 
-        delta_Y, 
-        A_m, 
-        sector_list, 
-        remuneration_array, 
-        NPT_array, 
-        DFA_array, 
-        OS_array, 
-        total_value_added_array
-    )
-    
-    # 3. Display the results
-    # Format numbers to 2 decimal places for cleaner UI
-    st.dataframe(results_df.style.format("{:.4f}"), use_container_width=True)
+# ==========================================
+# MAIN PAGE: EXECUTE & DISPLAY
+# ==========================================
 
+# 1. RUN SIMULATION (Only triggers on button click)
+if run_demand_sim:
+    with st.spinner("Calculating ripple effects..."):
+        delta_Y = create_demand_shock(shock_dict, sector_list)
+        
+        # Calculate and store in session state so they persist!
+        st.session_state.main_demand_results, st.session_state.breakdown_demand_results = simulate_demand_shock(
+            L_inverse_df, delta_Y, DTC_df, ITC_df, sector_list, 
+            remuneration_array, NPT_array, DFA_array, OS_array, total_value_added_array
+        )
+
+# 2. DISPLAY RESULTS (Triggers if data exists in session state, regardless of button state)
+if 'main_demand_results' in st.session_state:
+    st.subheader("📊 Demand Simulation Results")
+    
+    # Display Main Table
+    st.dataframe(st.session_state.main_demand_results.style.format("{:.2f}"), use_container_width=True)
+    
+    # The Checkbox is now OUTSIDE the button click block
+    if st.checkbox("🔍 Show Supply Chain Wave Breakdown", key="demand_breakdown_cb"):
+        st.markdown("*Direct = The initial shock. 1st Wave = Immediate parts/labor. 2nd+ Wave = Hidden/Deep supply chain effects.*")
+        
+        # Sort by the Deep Supply Chain output to find the "surprising" industries
+        sorted_breakdown = st.session_state.breakdown_demand_results.sort_values(
+            by="Output: 2nd+ Wave (Deep Supply Chain)", ascending=False
+        )
+        
+        st.dataframe(sorted_breakdown.style.format("{:.2f}"), use_container_width=True)
+
+# (Do the exact same thing for Price Results below!)
 if run_price_sim:
+    with st.spinner("Calculating price pass-through..."):
+        import_shocks_np = create_demand_shock(import_price_shock_dict, sector_list)
+        
+        price_results_df = simulate_targeted_price_shock(
+            L_inverse_df, ITC_df, value_added_df, 
+            import_shocks_np, primary_shock_matrix, sector_list
+        )
+        
+        # Store in session state
+        st.session_state.price_results = price_results_df
+
+if 'price_results' in st.session_state:
     st.subheader("📈 Price Simulation Results")
-    
-    # 1. Convert UI dicts to numpy arrays (reusing the demand shock function!)
-    import_shocks_np = create_demand_shock(import_price_shock_dict, sector_list)
-    
-    # 2. Run simulation
-    price_results_df = simulate_targeted_price_shock(
-        L_inverse_df, A_m, value_added_df, 
-        import_shocks_np, primary_shock_matrix, sector_list
-    )
-    
-    # 3. Display
-    st.dataframe(price_results_df.to_frame().style.format("{:.2f}%"), use_container_width=True)
+    st.dataframe(st.session_state.price_results.style.format("{:.2f}%"), use_container_width=True)
 
 if show_linkages:
     linkages_df, filtered_linkages = linkage_calculator(L_inverse, sector_list)
@@ -334,5 +362,6 @@ if show_linkages:
         st.subheader("🔗 Inter-Industry Linkage Table")
         st.dataframe(linkages_df)
     
+
 
     
