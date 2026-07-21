@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
+
+
 # Import the functions you saved in Step 2
 from input_output_model import (
     create_demand_shock,
@@ -15,7 +17,7 @@ from input_output_model import (
 st.set_page_config(page_title="Input Output Analysis App", layout="wide")
 st.title("China Input Output Analysis Engine")
 st.markdown("Use China's 2023 Input Output data to forecast the impacts of demand and price shocks.")
-st.markdown("Data is taken from China's National Bureau of Statistics 2023 Input Output database. Feel free to download the formatted input output table below for your own reference.")
+st.markdown("Data is taken from China's National Bureau of Statistics 2023 Non-competitive Input Output database. Feel free to download the formatted input output table below for your own reference.")
 
 # --- CATEGORIZATION FRAMEWORK ---
 # Used to organize the sidebar inputs
@@ -116,6 +118,16 @@ L_inverse_df = pd.DataFrame(L_inverse, index=DTC_df.index, columns=DTC_df.column
 
 sector_list = DTC_df.columns.tolist() # Converted to list for easier indexing
 
+# Initialize session state variables for auto-populating UI
+if 'primary_econ_shocks' not in st.session_state:
+    st.session_state.primary_econ_shocks = [0.0, 0.0, 0.0, 0.0] # Wages, Taxes, Deprec, OS
+if 'import_econ_shocks' not in st.session_state:
+    st.session_state.import_econ_shocks = 0.0 # Single number for all imports
+if 'import_price_shock_dict' not in st.session_state:
+    st.session_state.import_price_shock_dict = {sector: 0.0 for sector in sector_list}
+if 'fd_econ_shocks' not in st.session_state:
+    st.session_state.fd_econ_shocks = [0.0, 0.0, 0.0, 0.0] # Capital, Inventory, Consumption, Exports
+
 # ==========================================
 # Downloading Value Added Dataframe
 # ==========================================
@@ -163,35 +175,78 @@ short_va_names = ["Wages", "Taxes", "Deprec.", "Profit"]
 # ==========================================
 # SIDEBAR 1: DEMAND SHOCK UI
 # ==========================================
-st.sidebar.header("⚙️ Demand Shock Configuration")
-st.sidebar.markdown("Set exogenous demand shocks (in Billions RMB).")
+st.sidebar.header("⚙️ Demand Shock")
 
-shock_dict = {}
+fd_components = ["Capital", "Inventory", "Consumption", "Exports"]
+demand_shock_dict = {}
 
-# Create expandable sections for each category
-for category, sectors in sector_categories.items():
-    with st.sidebar.expander(category):
-        for sector in sectors:
-            # Safety check: only create input if sector actually exists in your Excel data
-            if sector in sector_list:
-                shock_value = st.number_input(
-                    label=sector,
-                    min_value=-1000.0, # Allow negative shocks (e.g. demand destruction)
-                    max_value=10000.0,
-                    value=0.0,        # Default is 0 as requested
-                    step=10.0,
-                    key=f"shock_{sector}" # Unique key for Streamlit
+with st.sidebar.popover("🎯 Targeted Final Demand Shock"):
+    st.markdown("*Input values in Billions RMB. Components will be summed per sector.*")
+    apply_fd_by_sector = st.checkbox("Apply by sector", key="fd_by_sector_cb")
+
+    if not apply_fd_by_sector:
+        # ---------------------------------------------------------
+        # ECONOMY-WIDE MODE
+        # ---------------------------------------------------------
+        cols = st.columns(4)
+        for j, comp in enumerate(fd_components):
+            with cols[j]:
+                st.markdown(f"<span style='font-size: 0.9em; font-weight: bold;'>{comp}</span>", unsafe_allow_html=True)
+                # Save input to session state so it isn't lost when clicking the checkbox
+                val = st.number_input(
+                    label=comp, label_visibility="collapsed", 
+                    min_value=-1000.0, max_value=10000.0, 
+                    value=st.session_state.fd_econ_shocks[j], step=10.0, 
+                    key=f"fd_econ_wide_{j}"
                 )
-                shock_dict[sector] = shock_value
-            else:
-                # Helpful warning if there's a typo in the dictionary above
-                st.sidebar.warning(f"'{sector}' not found in data!")
+                st.session_state.fd_econ_shocks[j] = val
+        
+        # Sum the 4 components and apply to every sector
+        total_economy_shock = sum(st.session_state.fd_econ_shocks)
+        for sector in sector_list:
+            demand_shock_dict[sector] = total_economy_shock
+                
+    else:
+        # ---------------------------------------------------------
+        # SECTOR-SPECIFIC MODE
+        # ---------------------------------------------------------
+        for category, sectors in sector_categories.items():
+            with st.expander(category):
+                # Small column headers
+                header_cols = st.columns([3, 1, 1, 1, 1]) 
+                for j, name in enumerate(fd_components):
+                    with header_cols[j+1]:
+                        st.markdown(f"<span style='font-size: 0.75em; font-weight: bold; text-align: center;'>{name}</span>", unsafe_allow_html=True)
+                
+                st.markdown("<hr style='margin: 0px; border-top: 1px solid #555;'>", unsafe_allow_html=True)
+                
+                for sector in sectors:
+                    if sector in sector_list:
+                        # Use global index to prevent duplicate key errors across categories
+                        global_idx = sector_list.index(sector)
+                        
+                        row_cols = st.columns([3, 1, 1, 1, 1])
+                        with row_cols[0]:
+                            st.markdown(f"<span style='font-size: 0.85em;'>{sector}</span>", unsafe_allow_html=True)
+                        
+                        sector_total_shock = 0.0
+                        for j, comp in enumerate(fd_components):
+                            with row_cols[j+1]:
+                                # THE MAGIC: Use the economy-wide shock as the default value!
+                                val = st.number_input(
+                                    label=comp, label_visibility="collapsed", 
+                                    min_value=-1000.0, max_value=10000.0, 
+                                    value=st.session_state.fd_econ_shocks[j], # <--- Auto-populate
+                                    step=10.0, key=f"fd_sec_{global_idx}_{j}"
+                                )
+                                sector_total_shock += val
+                        
+                        # Add the summed total for this specific sector to the dictionary
+                        demand_shock_dict[sector] = sector_total_shock
 
-
-# Add a run button so the math doesn't recalculate on every single keystroke
 run_demand_sim = st.sidebar.button("🚀 Run Demand Simulation", type="primary", use_container_width=True)
 
-st.sidebar.divider() # Visual separator
+st.sidebar.divider()
 
 # ==========================================
 # SIDEBAR 2: PRICE SHOCK UI
@@ -211,76 +266,97 @@ with st.sidebar.popover("🎯 Targeted Primary Input Prices"):
         for j, va_comp in enumerate(va_components_list):
             with cols[j]:
                 st.markdown(f"<span style='font-size: 0.9em; font-weight: bold;'>{short_va_names[j]}</span>", unsafe_allow_html=True)
+                # Save input to session state so it isn't lost when clicking the checkbox
                 val = st.number_input(
                     label=va_comp, label_visibility="collapsed", 
-                    min_value=-100.0, max_value=500.0, value=0.0, step=1.0, 
+                    min_value=-100.0, max_value=500.0, value=st.session_state.primary_econ_shocks[j], step=1.0, 
                     key=f"econ_wide_{j}"
                 )
-                # Apply to entire column in the matrix
+                st.session_state.primary_econ_shocks[j] = val
                 primary_shock_matrix[:, j] = val
                 
     else:
-        # SECTOR-SPECIFIC MODE (Now has full screen width!)
+        # SECTOR-SPECIFIC MODE
         for category, sectors in sector_categories.items():
             with st.expander(category):
-                # Small column headers
                 header_cols = st.columns([3, 1, 1, 1, 1]) 
                 for j, name in enumerate(short_va_names):
                     with header_cols[j+1]:
                         st.markdown(f"<span style='font-size: 0.85em; font-weight: bold; text-align: center;'>{name}</span>", unsafe_allow_html=True)
-                
                 st.markdown("<hr style='margin: 0px; border-top: 1px solid #555;'>", unsafe_allow_html=True)
                 
                 for sector in sectors:
                     if sector in sector_list:
-                        i = sector_list.index(sector) 
-                        
+                        global_idx = sector_list.index(sector)
                         row_cols = st.columns([3, 1, 1, 1, 1])
                         with row_cols[0]:
                             st.markdown(f"<span style='font-size: 0.85em;'>{sector}</span>", unsafe_allow_html=True)
                         
                         for j, va_comp in enumerate(va_components_list):
                             with row_cols[j+1]:
+                                # THE MAGIC: Use the economy-wide shock as the default value!
                                 val = st.number_input(
                                     label=va_comp, label_visibility="collapsed", 
-                                    min_value=-100.0, max_value=500.0, value=0.0, step=1.0, 
-                                    key=f"targeted_{i}_{j}"
+                                    min_value=-100.0, max_value=500.0, 
+                                    value=st.session_state.primary_econ_shocks[j], # <--- Auto-populate
+                                    step=1.0, key=f"targeted_{global_idx}_{j}"
                                 )
-                                # Apply to specific cell in the matrix
-                                primary_shock_matrix[i, j] = val
+                                primary_shock_matrix[global_idx, j] = val
 
 
 # --- IMPORTED INPUTS POPOVER ---
 with st.sidebar.popover("📦 Imported Input Prices"):
-    st.markdown("*Set % change in price of imported intermediate goods*")
-    for category, sectors in sector_categories.items():
-        with st.expander(category):
-            for sector in sectors:
-                if sector in sector_list:
-                    # 2 columns: Name | Input (Plenty of room in a popover)
-                    cols = st.columns([4, 1])
-                    with cols[0]:
-                        st.markdown(f"<span style='font-size: 0.85em;'>{sector}</span>", unsafe_allow_html=True)
-                    with cols[1]:
-                        val = st.number_input(
-                            label=sector, label_visibility="collapsed", 
-                            min_value=-500.0, max_value=1000.0, value=0.0, step=1.0, 
-                            key=f"import_price_{sector}"
-                        )
-                        import_price_shock_dict[sector] = val
+    import_apply_by_sector = st.checkbox("Apply by sector", key="import_apply_by_sector_cb")
+    
+    if not import_apply_by_sector:
+        # NEW ECONOMY-WIDE MODE FOR IMPORTS
+        st.markdown("*Applies uniform % change to all imported inputs*")
+        st.session_state.import_econ_shocks = st.number_input(
+            label="All Imported Inputs", label_visibility="visible",
+            min_value=-100.0, max_value=500.0, 
+            value=st.session_state.import_econ_shocks, step=1.0, 
+            key="import_econ_wide_single"
+        )
+        # Apply to all sectors in the background dictionary
+        for sector in sector_list:
+            st.session_state.import_price_shock_dict[sector] = st.session_state.import_econ_shocks
+
+    else:
+        # SECTOR-SPECIFIC MODE FOR IMPORTS
+        for category, sectors in sector_categories.items():
+            with st.expander(category):
+                for sector in sectors:
+                    if sector in sector_list:
+                        cols = st.columns([4, 1])
+                        with cols[0]:
+                            st.markdown(f"<span style='font-size: 0.85em;'>{sector}</span>", unsafe_allow_html=True)
+                        with cols[1]:
+                            # THE MAGIC: Use the economy-wide shock as the default value!
+                            val = st.number_input(
+                                label=sector, label_visibility="collapsed", 
+                                min_value=-100.0, max_value=500.0, 
+                                value=st.session_state.import_econ_shocks, # <--- Auto-populate
+                                step=1.0, key=f"import_price_{sector}"
+                            )
+                            st.session_state.import_price_shock_dict[sector] = val
 
 run_price_sim = st.sidebar.button("📈 Run Price Simulation", type="primary", use_container_width=True)
 
 st.sidebar.divider() # Visual separator
 
 # ==========================================
-# SIDEBAR 3: Linkage Table
+# SIDEBAR 3: Deeper Analysis Tools
 # ==========================================
-st.sidebar.header("🔗 Linkages")
+st.sidebar.header("🔎 Deeper Analysis Tools")
 st.sidebar.markdown("Explore industry connections")
 
-show_linkages = st.sidebar.button("🔗 Generate Table", type="primary", use_container_width=True)
+show_linkages = st.sidebar.button("🔗 Generate Linkage Table", type="primary", use_container_width=True)
 filtered = st.sidebar.checkbox("Show only above-average linkages")
+
+st.sidebar.markdown("Explore production functions & demand multipliers")
+# Combined button for both matrices
+show_TCs = st.sidebar.button("📊 Show Technical Coefficients", type="primary", use_container_width=True)
+show_leontief = st.sidebar.button("📈 Show Leontief Inverse Matrix", type="primary", use_container_width=True)
 
 # ==========================================
 # SIDEBAR 4: Input Output Spreadsheet Download
@@ -302,65 +378,86 @@ st.sidebar.download_button(
 # EXECUTE SIMULATION (Triggered by button)
 # ==========================================
 # ==========================================
-# MAIN PAGE: EXECUTE & DISPLAY
+# MAIN PAGE: EXECUTION & DISPLAY LOGIC
 # ==========================================
 
-# 1. RUN SIMULATION (Only triggers on button click)
+# ---------------------------------------------------------
+# STEP 1: BUTTON CLICKS (Calculate and Save Data)
+# ---------------------------------------------------------
+
 if run_demand_sim:
     with st.spinner("Calculating ripple effects..."):
-        delta_Y = create_demand_shock(shock_dict, sector_list)
-        
-        # Calculate and store in session state so they persist!
+        delta_Y = create_demand_shock(demand_shock_dict, sector_list)
         st.session_state.main_demand_results, st.session_state.breakdown_demand_results = simulate_demand_shock(
             L_inverse_df, delta_Y, DTC_df, ITC_df, sector_list, 
             remuneration_array, NPT_array, DFA_array, OS_array, total_value_added_array
         )
+        st.session_state.active_view = 'demand'
 
-# 2. DISPLAY RESULTS (Triggers if data exists in session state, regardless of button state)
-if 'main_demand_results' in st.session_state:
-    st.subheader("📊 Demand Simulation Results")
-    
-    # Display Main Table
-    st.dataframe(st.session_state.main_demand_results.style.format("{:.2f}"), use_container_width=True)
-    
-    # The Checkbox is now OUTSIDE the button click block
-    if st.checkbox("🔍 Show Supply Chain Wave Breakdown", key="demand_breakdown_cb"):
-        st.markdown("*Direct = The initial shock. 1st Wave = Immediate parts/labor. 2nd+ Wave = Hidden/Deep supply chain effects.*")
-        
-        # Sort by the Deep Supply Chain output to find the "surprising" industries
-        sorted_breakdown = st.session_state.breakdown_demand_results.sort_values(
-            by="Output: 2nd+ Wave (Deep Supply Chain)", ascending=False
-        )
-        
-        st.dataframe(sorted_breakdown.style.format("{:.2f}"), use_container_width=True)
-
-# (Do the exact same thing for Price Results below!)
 if run_price_sim:
     with st.spinner("Calculating price pass-through..."):
-        import_shocks_np = create_demand_shock(import_price_shock_dict, sector_list)
-        
-        price_results_df = simulate_targeted_price_shock(
+        import_shocks_np = create_demand_shock(st.session_state.import_price_shock_dict, sector_list)
+        st.session_state.price_results = simulate_targeted_price_shock(
             L_inverse_df, ITC_df, value_added_df, 
             import_shocks_np, primary_shock_matrix, sector_list
         )
-        
-        # Store in session state
-        st.session_state.price_results = price_results_df
-
-if 'price_results' in st.session_state:
-    st.subheader("📈 Price Simulation Results")
-    st.dataframe(st.session_state.price_results.style.format("{:.2f}%"), use_container_width=True)
+        st.session_state.active_view = 'price'
 
 if show_linkages:
-    linkages_df, filtered_linkages = linkage_calculator(L_inverse, sector_list)
+    with st.spinner("Calculating linkages..."):
+        st.session_state.linkage_results, st.session_state.filtered_linkage_results = linkage_calculator(L_inverse, A_m, sector_list)
+        st.session_state.active_view = 'linkages'
 
-    if filtered:
+if show_TCs:
+    # Technical coefficients don't need calculation, just change the view
+    st.session_state.active_view = 'tcs'
+
+if show_leontief:
+    st.session_state.active_view = 'leontief'
+
+
+# ---------------------------------------------------------
+# STEP 2: DISPLAY LOGIC (Strict If/Elif to prevent stacking)
+# ---------------------------------------------------------
+
+current_view = st.session_state.get('active_view')
+
+if current_view == 'demand':
+    st.subheader("📊 Demand Simulation Results")
+    st.dataframe(st.session_state.main_demand_results.style.format("{:.2f}"), use_container_width=True)
+    
+    if st.checkbox("🔍 Show Supply Chain Wave Breakdown", key="demand_breakdown_cb"):
+        sorted_breakdown = st.session_state.breakdown_demand_results.sort_values(
+            by="Output: 2nd+ Wave (Deep Supply Chain)", ascending=False
+        )
+        st.dataframe(sorted_breakdown.style.format("{:.2f}"), use_container_width=True)
+
+elif current_view == 'price':
+    st.subheader("📈 Price Simulation Results")
+    if st.checkbox("🔍 Show Direct vs. Indirect Price Pass-Through", key="price_breakdown_cb"):
+        st.dataframe(st.session_state.price_results.style.format("{:.2f}%"), use_container_width=True)
+    else:
+        st.dataframe(st.session_state.price_results[['Total Price Changes (%)']].style.format("{:.2f}%"), use_container_width=True)
+
+elif current_view == 'linkages':
+    if st.session_state.get('filtered') and st.sidebar.checkbox("Show only above-average linkages"):
         st.subheader("🔗 Filtered Inter-Industry Linkage Table")
-        st.dataframe(filtered_linkages)
-
+        st.dataframe(st.session_state.filtered_linkage_results)
     else:
         st.subheader("🔗 Inter-Industry Linkage Table")
-        st.dataframe(linkages_df)
+        st.dataframe(st.session_state.linkage_results)
+
+elif current_view == 'tcs':
+    st.subheader("Domestic Technical Coefficients Matrix")
+    st.dataframe(DTC_df.style.format("{:.4f}"), use_container_width=True)
+    st.subheader("Imported Technical Coefficients Matrix")
+    st.dataframe(ITC_df.style.format("{:.4f}"), use_container_width=True)
+
+elif current_view == 'leontief':
+    st.subheader("Leontief Inverse Matrix")
+    st.dataframe(L_inverse_df.T.style.format("{:.4f}"), use_container_width=True)
+
+
     
 
 
