@@ -238,7 +238,7 @@ def simulate_targeted_price_shock(L_inverse, A_m, value_added_df, import_price_s
 
 #%%
 
-def linkage_calculator(L_inverse, sector_list):
+def linkage_calculator(L_inverse, A_m, sector_list):
     
     # Backward Linkage = Column Sums (axis=0 sums vertically down the columns)
     # This answers: "If I shock this sector's final demand, how much total output happens?"
@@ -251,16 +251,30 @@ def linkage_calculator(L_inverse, sector_list):
     forward_linkage = np.sum(L_inverse, axis=1)
 
     std_forward_linkage = forward_linkage/forward_linkage.mean()
+
+    # 1. Multiply to get the full 42x42 matrix of import requirements
+    import_intensity_matrix = np.dot(A_m, L_inverse)
+
+    # 2. Sum down the columns (axis=0) to get the 1x42 vector
+    import_intensity_vector = np.sum(import_intensity_matrix, axis=0)
+
+    # 3. Wrap in a pandas Series for your app
+    import_intensity_series = pd.Series(import_intensity_vector, index=sector_list, name="Import Dependency Ratio")
     
     # Assemble into a clean DataFrame
     linkages_df = pd.DataFrame({
         'Backward Linkage (Output Mult.)': backward_linkage,
-        'Standardized Backward Linkage': std_backward_linkage,
         'Forward Linkage': forward_linkage,
+        'Import Dependency Ratio': import_intensity_series,
+        'Standardized Backward Linkage': std_backward_linkage,
         'Standardized Forward Linkage': std_forward_linkage
     }, index=sector_list)
 
     filtered_linkages = linkages_df[(linkages_df["Standardized Backward Linkage"] > 1) & (linkages_df["Standardized Forward Linkage"] > 1)]
     
     return linkages_df, filtered_linkages
+
+
+
+
 
