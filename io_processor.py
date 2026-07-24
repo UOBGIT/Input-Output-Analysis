@@ -313,18 +313,23 @@ def create_final_use_columns(parsed_names):
                         if not(parsed_name[5] in final_use_columns):
                             final_use_columns.append(parsed_name[5])
 
+    check_clean = True
 
     final_use_columns.append("Final Use")
 
     if len(final_use_headcolumns) != 4:
         #print("WARNING: DIFFERENT NUMBER OF HEAD COLUMNS THAN EXPECTED. STANDARD IS (GROSS CAPITAL FORMATION, FINAL USE, IMPORT, TOTAL OUTPUT).")
         logs.append("WARNING: DIFFERENT NUMBER OF HEAD COLUMNS THAN EXPECTED. STANDARD IS (GROSS CAPITAL FORMATION, FINAL USE, IMPORT, TOTAL OUTPUT).")
+        check_clean = False
 
     if len(final_use_columns) != 5:
         #print("WARNING: DIFFERENT NUMBER OF SUBCOLUMNS THAN EXPECTED. STANDARD IS (FIXED CAPITAL, INVENTORY, FINAL CONSUMPTION, EXPORT, AND FINAL USE).")
         logs.append("WARNING: DIFFERENT NUMBER OF SUBCOLUMNS THAN EXPECTED. STANDARD IS (FIXED CAPITAL, INVENTORY, FINAL CONSUMPTION, EXPORT, AND FINAL USE).")
+        check_clean = False
     # print(final_use_headcolumns)
     # print(final_use_columns)
+    if check_clean:
+        logs.append("SUCCESS! COLUMN NAMES ARE AS EXPECTED.")
 
     return final_use_columns, logs
 
