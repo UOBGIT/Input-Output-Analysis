@@ -277,4 +277,3 @@ def linkage_calculator(L_inverse, A_m, sector_list):
 
 
 
-
