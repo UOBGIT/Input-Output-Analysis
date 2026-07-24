@@ -1,8 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-
-
+import io
 
 # Import the functions you saved in Step 2
 from input_output_model import (
@@ -13,11 +12,96 @@ from input_output_model import (
     linkage_calculator
 )
 
+from io_processor import (
+    is_number, 
+    get_rid_of_numbers,
+    clean_input_output_data,
+    create_sector_list,
+    populate_IT_matrix,
+    create_value_added_list,
+    populate_primary_input_matrix,
+    create_final_use_columns,
+    populate_final_use_matrix,
+    populate_total_output_vector,
+    populate_total_input_vector,
+    check_value_added,
+    check_final_use,
+    check_domestic_total_output,
+    check_imported_total_output,
+    check_total_input,
+    check_input_output_equality
+)
+
+def load_and_process_data(uploaded_file):
+    df = pd.read_excel(uploaded_file)
+    df_index, parsed_names, logs = clean_input_output_data(df) ## Create identification table
+    st.code("\n".join(logs), language="text")
+    sector_list, logs = create_sector_list(parsed_names) ## Create list of sector names (normally 42)
+    st.code("\n".join(logs), language="text")
+
+    ## Generate and populate intermediate transaction matrices
+
+    IDT_df = pd.DataFrame(index = sector_list, columns = sector_list)
+    IIT_df = pd.DataFrame(index = sector_list, columns = sector_list) 
+    IDT_df, logs = populate_IT_matrix(IDT_df, df_index, parsed_names, domestic = True)
+    st.code("\n".join(logs), language="text")
+    IIT_df, logs = populate_IT_matrix(IIT_df, df_index, parsed_names, domestic = False)
+    st.code("\n".join(logs), language="text")
+    
+    ## Generate and populate primary input matrix
+
+    value_added_list, logs = create_value_added_list(parsed_names)
+    st.code("\n".join(logs), language="text")
+    PI_df = pd.DataFrame(index = value_added_list, columns = sector_list)
+    PI_df, logs = populate_primary_input_matrix(PI_df, df_index, parsed_names)
+    st.code("\n".join(logs), language="text")
+
+    ## Generate and populate final demand matrices
+
+    final_use_columns, logs = create_final_use_columns(parsed_names)
+    st.code("\n".join(logs), language="text")
+
+    FDD_df = pd.DataFrame(index = sector_list, columns = final_use_columns)
+    FDI_df = pd.DataFrame(index = sector_list, columns = final_use_columns)
+    FDD_df, logs = populate_final_use_matrix(FDD_df, df_index, parsed_names, domestic = True)
+    st.code("\n".join(logs), language="text")
+    FDI_df, logs = populate_final_use_matrix(FDI_df, df_index, parsed_names, domestic = False)
+    st.code("\n".join(logs), language="text")
+
+    ## Generate and populate total output vectors
+
+    total_output_domestic = pd.DataFrame(index = sector_list, columns = ["Total Domestic Output"])
+    total_output_imported = pd.DataFrame(index = sector_list, columns = ["Total Imported Output"])
+    total_output_domestic, total_output_imported, logs = populate_total_output_vector(total_output_domestic, total_output_imported, df_index, parsed_names)
+    st.code("\n".join(logs), language="text")
+    ## Generate and populate total input vectors 
+
+    total_input = pd.DataFrame(index = sector_list, columns = ["Total Input"])
+    total_input, logs = populate_total_input_vector(total_input, df_index, parsed_names)
+    st.code("\n".join(logs), language="text")
+
+    return IDT_df, IIT_df, PI_df, FDD_df, FDI_df, total_output_domestic, total_output_imported, total_input
+
+def verify_io_data(IDT_df, IIT_df, PI_df, FDD_df, FDI_df, total_output_domestic, total_output_imported, total_input):
+    logs = check_value_added(PI_df)
+    st.code("\n".join(logs), language="text")
+    logs = check_final_use(FDD_df)
+    st.code("\n".join(logs), language="text")
+    logs = check_domestic_total_output(IDT_df, FDD_df, total_output_domestic)
+    st.code("\n".join(logs), language="text")
+    logs = check_imported_total_output(IIT_df, FDI_df, total_output_imported)
+    st.code("\n".join(logs), language="text")
+    logs = check_total_input(IDT_df, IIT_df, PI_df, total_input)
+    st.code("\n".join(logs), language="text")
+    logs = check_input_output_equality(total_input, total_output_domestic)
+    st.code("\n".join(logs), language="text")
+
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Input Output Analysis App", layout="wide")
 st.title("China Input Output Analysis Engine")
 st.markdown("Use China's 2023 Input Output data to forecast the impacts of demand and price shocks.")
 st.markdown("Data is taken from China's National Bureau of Statistics 2023 Non-competitive Input Output database. Feel free to download the formatted input output table below for your own reference.")
+
 
 # --- CATEGORIZATION FRAMEWORK ---
 # Used to organize the sidebar inputs
@@ -368,11 +452,85 @@ with open(file_path, "rb") as f:
 
 # 2. Add the download button widget
 st.sidebar.download_button(
-    label="📥 Download Formatted Input Output Table",
+    label="📥 Download Formatted 2023 Input Output Table",
     data=excel_data,
     file_name="China_2023_input_output_table.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
+
+# ============================================
+# SIDEBAR 5: Clean Up New Input Output Data
+# ============================================
+
+st.sidebar.divider()
+st.sidebar.header("Clean Input Output Data")
+
+uploaded_file = st.sidebar.file_uploader("Upload Raw IO Data", type=['xlsx'])
+
+# 1. THE CLEANING BLOCK (Only runs if button is clicked)
+if uploaded_file is not None:
+    clean_new_data = st.sidebar.button("Clean Data", type="primary", use_container_width=True)
+
+    if clean_new_data:
+        with st.spinner("Parsing through data..."):
+            IDT_df, IIT_df, PI_df, FDD_df, FDI_df, total_output_domestic, total_output_imported, total_input = load_and_process_data(uploaded_file)
+
+        # Save them to session state
+        st.session_state.io_dataframes = {
+            'IDT': IDT_df,
+            'IIT': IIT_df,
+            'PI': PI_df,
+            'FDD': FDD_df,
+            'FDI': FDI_df,
+            'total_output_dom': total_output_domestic,
+            'total_output_import': total_output_imported,
+            'total_input': total_input
+        }
+        with st.spinner("Verifying data..."):
+            verify_io_data(IDT_df, IIT_df, PI_df, FDD_df, FDI_df, total_output_domestic, total_output_imported, total_input)
+        st.success("Data successfully parsed and ready for download!")
+
+
+# 2. THE DOWNLOAD BLOCK (Runs on every page load, but only shows if data exists)
+if 'io_dataframes' in st.session_state:
+    
+    if st.sidebar.button("📥 Download Separated Data (Excel)", type="primary", use_container_width=True):
+        with st.spinner("Packaging 8 DataFrames into Excel workbook..."):
+            
+            # Retrieve your 8 dataframes from session state
+            IDT_df = st.session_state.io_dataframes['IDT']
+            IIT_df = st.session_state.io_dataframes['IIT']
+            PI_df = st.session_state.io_dataframes['PI']
+            FDD_df = st.session_state.io_dataframes['FDD']
+            FDI_df = st.session_state.io_dataframes['FDI']
+            total_output_domestic = st.session_state.io_dataframes['total_output_dom']
+            total_output_imported = st.session_state.io_dataframes['total_output_import']
+            total_input = st.session_state.io_dataframes['total_input']
+
+            # Create an in-memory buffer
+            buffer = io.BytesIO()
+
+            # Write each DataFrame to a different sheet inside the buffer
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                IDT_df.to_excel(writer, sheet_name='1. IDT (Domestic)', index=True)
+                IIT_df.to_excel(writer, sheet_name='2. IIT (Imported)', index=True)
+                PI_df.to_excel(writer, sheet_name='3. Primary Inputs', index=True)
+                FDD_df.to_excel(writer, sheet_name='4. Final Demand (Domestic)', index=True)
+                FDI_df.to_excel(writer, sheet_name='5. Final Demand (Imported)', index=True)
+                total_output_domestic.to_excel(writer, sheet_name='6. Total Output (Domestic)', index=True)
+                total_output_imported.to_excel(writer, sheet_name='7. Total Output (Imported)', index=True)
+                total_input.to_excel(writer, sheet_name='8. Total Input', index=True)
+
+            # CRITICAL STEP: Reset the buffer's cursor to the beginning
+            buffer.seek(0)
+
+            # Trigger the download
+            st.sidebar.download_button(
+                label="⬇️ Click here to download IO_Data_Separated.xlsx",
+                data=buffer,
+                file_name="IO_Data_Separated.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
 # ==========================================
 # EXECUTE SIMULATION (Triggered by button)
