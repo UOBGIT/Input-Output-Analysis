@@ -4,6 +4,64 @@ import pandas as pd
 import numpy as np
 
 #%%
+# ==========================================
+# Standardized Way to Clean Dataframes
+# ==========================================
+
+def clean_IO_df(df):
+    try:
+        df.index = df["Unnamed: 0"]
+        df = df.drop(columns = ["Unnamed: 0"])
+        df = df.rename_axis(None, axis = 0)
+        return df
+    except:
+        print("Error in processing dataframe...")
+        return None
+
+#%%
+# ==========================================
+# FUNCTION TO CREATE 3 REQUIRED MATRICES
+# ==========================================
+
+def calculate_io_coefficients(IDT_df, IIT_df, PI_df, total_output):
+    """
+    Calculates Domestic, Imported, and Value Added technical coefficients.
+    
+    Parameters:
+    IDT_df (pd.DataFrame): Domestic intermediate transactions (Index: Sectors, Columns: Sectors).
+    IIT_df (pd.DataFrame): Imported intermediate transactions (Index: Sectors, Columns: Sectors).
+    PI_df (pd.DataFrame): Primary inputs / Value added (Index: VA Categories, Columns: Sectors).
+    total_output (pd.Series or pd.DataFrame): Total output (Index: Sectors).
+    
+    Returns:
+    tuple: (DTC_df, ITC_df, value_added_df)
+    """
+    # If total_output is passed as a DataFrame (e.g., 1 column), squeeze it to a Series
+    if isinstance(total_output, pd.DataFrame):
+        total_output = total_output.squeeze()
+        
+    # Safety Check: Ensure indices match (Pandas will throw an error if they don't align)
+    if not IDT_df.columns.equals(total_output.index):
+        raise ValueError("Column names of IDT/IIT/PI do not match the index of total_output!")
+
+    # 1. Domestic Technical Coefficients (A^d)
+    # axis=1 means "divide each column by the corresponding value in total_output"
+    DTC_df = IDT_df.divide(total_output, axis=1)
+    
+    # 2. Imported Technical Coefficients (A^m)
+    ITC_df = IIT_df.divide(total_output, axis=1)
+    
+    # 3. Value Added Coefficients (VA / X)
+    value_added_df = PI_df.divide(total_output, axis=1)
+    
+    # Optional: Replace infinities with NaN just in case a sector had 0 total output
+    DTC_df = DTC_df.replace([np.inf, -np.inf], np.nan)
+    ITC_df = ITC_df.replace([np.inf, -np.inf], np.nan)
+    value_added_df = value_added_df.replace([np.inf, -np.inf], np.nan)
+
+    return DTC_df, ITC_df, value_added_df
+
+#%%
 def create_demand_shock(shock_dict, sector_list):
     """
     Converts a dictionary of sector shocks into a properly indexed numpy array.
@@ -93,7 +151,7 @@ def simulate_demand_shock(L_inverse, delta_Y, A_d, A_m, sector_list, remuneratio
     results_df = pd.concat([
         pd.Series(delta_X_total, index=sector_list, name='Total Output Impact'),
         pd.Series(delta_M_total, index=sector_list, name='Total Import Leakage'),
-        pd.Series(delta_X_total - delta_M_total, index=sector_list, name="Domestic Content Impact"),
+        pd.Series(delta_X_total - delta_M_total, index=sector_list, name="Domestic Net Content Impact"),
         pd.Series(delta_VA_total, index=sector_list, name="Total Change in Value Added"),
         pd.Series(delta_remuneration, index=sector_list, name="Change in Remuneration"),
         pd.Series(delta_NPT, index=sector_list, name="Change in Taxes"),
@@ -146,10 +204,8 @@ def simulate_demand_shock(L_inverse, delta_Y, A_d, A_m, sector_list, remuneratio
     
 
 #%%
-def generate_va_matrices(value_added_df):
+def generate_va_matrices(value_added_df, sector_list):
     ### Creating a diagonal Total Value Added Dataframe
-
-    sector_list = value_added_df.columns
 
     total_value_added_array = np.zeros((len(sector_list), len(sector_list)))
     remuneration_array = np.zeros((len(sector_list), len(sector_list)))
