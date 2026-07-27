@@ -5,6 +5,8 @@ import io
 
 # Import the functions you saved in Step 2
 from input_output_model import (
+    clean_IO_df,
+    calculate_io_coefficients,
     create_demand_shock,
     simulate_demand_shock,
     generate_va_matrices, 
@@ -168,26 +170,37 @@ va_components_list = [
     "Operating Surplus"
 ]
 
-file_path = "Input Output Table.xlsx"
 
-### DOWNLOAD AND CLEAN DATA
 
-DTC_df = pd.read_excel(file_path, sheet_name = "Domestic Technical Coefficients")
-ITC_df = pd.read_excel(file_path, sheet_name = "Imported Technical Coefficients")
+# ==========================================
+# NEW WAY TO GET THE 3 MAIN MATRICES
+# ==========================================
 
-DTC_df.index = DTC_df["Unnamed: 0"]
-DTC_df = DTC_df.drop(columns = ["Unnamed: 0"])
-ITC_df.index = ITC_df["Unnamed: 0"]
-ITC_df = ITC_df.drop(columns = ["Unnamed: 0"])
+file_path = "Test IO Table.xlsx"
 
-DTC_df = DTC_df.rename_axis(None, axis=0)
-ITC_df = ITC_df.rename_axis(None, axis=0)
+# ==========================================
+# Download and Clean Dataframes
+# ==========================================
 
+IDT_df = pd.read_excel(file_path, sheet_name = "1. IDT (Domestic)")
+IIT_df = pd.read_excel(file_path, sheet_name = "2. IIT (Imported)")
+PI_df = pd.read_excel(file_path, sheet_name = "3. Primary Inputs")
+total_output = pd.read_excel(file_path, sheet_name = "6. Total Output (Domestic)")
+
+IDT_df = clean_IO_df(IDT_df)
+IIT_df = clean_IO_df(IIT_df)
+PI_df = clean_IO_df(PI_df)
+total_output = clean_IO_df(total_output)
+
+# ==========================================
+# CREATE MATRICES FOR ALGEBRAIC MANIPULATION
+# ==========================================
+
+DTC_df, ITC_df, value_added_df = calculate_io_coefficients(IDT_df, IIT_df, PI_df, total_output)
 n = DTC_df.shape[0]
 
-# Commented out st.dataframe to keep main page clean, 
-# but you can uncomment it to debug:
-# st.dataframe(DTC_df)
+sector_list = value_added_df.columns
+total_value_added_array, remuneration_array, NPT_array, DFA_array, OS_array = generate_va_matrices(value_added_df, sector_list)
 
 # ==========================================
 # PHASE 2: Building the Prediction Engine
@@ -212,39 +225,7 @@ if 'import_price_shock_dict' not in st.session_state:
 if 'fd_econ_shocks' not in st.session_state:
     st.session_state.fd_econ_shocks = [0.0, 0.0, 0.0, 0.0] # Capital, Inventory, Consumption, Exports
 
-# ==========================================
-# Downloading Value Added Dataframe
-# ==========================================
 
-value_added_df = pd.read_excel(file_path, sheet_name = "Value Added By Industry")
-value_added_df.index = value_added_df["Unnamed: 0"]
-value_added_df = value_added_df.drop(columns = ["Unnamed: 0"])
-value_added_df = value_added_df.rename_axis(None, axis=0)
-
-total_value_added_array = np.zeros((len(sector_list), len(sector_list)))
-remuneration_array = np.zeros((len(sector_list), len(sector_list)))
-NPT_array = np.zeros((len(sector_list), len(sector_list)))
-DFA_array = np.zeros((len(sector_list), len(sector_list)))
-OS_array = np.zeros((len(sector_list), len(sector_list)))
-
-total_value_added_df = pd.DataFrame(total_value_added_array, index = sector_list, columns = sector_list)
-remuneration_df = pd.DataFrame(remuneration_array, index = sector_list, columns = sector_list)
-NPT_df = pd.DataFrame(NPT_array, index = sector_list, columns = sector_list)
-DFA_df = pd.DataFrame(DFA_array, index = sector_list, columns = sector_list)
-OS_df = pd.DataFrame(OS_array, index = sector_list, columns = sector_list)
-
-for sector in sector_list:
-    total_value_added_df.at[sector, sector] = value_added_df.at["Total Value Added", sector]
-    remuneration_df.at[sector, sector] = value_added_df.at["Remuneration of Employee", sector]
-    NPT_df.at[sector, sector] = value_added_df.at["Net Production Tax", sector]
-    DFA_df.at[sector, sector] = value_added_df.at["Depreciation of Fixed Asset", sector]
-    OS_df.at[sector, sector] = value_added_df.at["Operating Surplus", sector]
-
-total_value_added_array = total_value_added_df.values
-remuneration_array = remuneration_df.values
-NPT_array = NPT_df.values
-DFA_array = DFA_df.values
-OS_array = OS_df.values
 
 # ==========================================
 # INITIALIZE SHOCK VARIABLES (Crucial step!)
@@ -494,7 +475,7 @@ if uploaded_file is not None:
 # 2. THE DOWNLOAD BLOCK (Runs on every page load, but only shows if data exists)
 if 'io_dataframes' in st.session_state:
     
-    if st.sidebar.button("📥 Download Separated Data (Excel)", type="primary", use_container_width=True):
+    if st.sidebar.button("📥 Download Organized Data (Excel)", type="primary", use_container_width=True):
         with st.spinner("Packaging 8 DataFrames into Excel workbook..."):
             
             # Retrieve your 8 dataframes from session state
@@ -512,8 +493,8 @@ if 'io_dataframes' in st.session_state:
 
             # Write each DataFrame to a different sheet inside the buffer
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                IDT_df.to_excel(writer, sheet_name='1. IDT (Domestic)', index=True)
-                IIT_df.to_excel(writer, sheet_name='2. IIT (Imported)', index=True)
+                IDT_df.to_excel(writer, sheet_name='1. Transactions (Domestic)', index=True)
+                IIT_df.to_excel(writer, sheet_name='2. Transactions (Imported)', index=True)
                 PI_df.to_excel(writer, sheet_name='3. Primary Inputs', index=True)
                 FDD_df.to_excel(writer, sheet_name='4. Final Demand (Domestic)', index=True)
                 FDI_df.to_excel(writer, sheet_name='5. Final Demand (Imported)', index=True)
