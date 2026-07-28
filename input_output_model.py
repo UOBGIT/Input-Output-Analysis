@@ -62,6 +62,98 @@ def calculate_io_coefficients(IDT_df, IIT_df, PI_df, total_output):
     return DTC_df, ITC_df, value_added_df
 
 #%%
+
+
+def aggregate_io_tables(IDT_df, IIT_df, PI_df, FDD_df, FDI_df, total_output, total_imported_output, total_input, mapping_dict):
+    """
+    Aggregates IO tables based on a mapping dictionary, then calculates coefficients.
+    Sectors not included in the mapping dict will be kept as-is.
+    """
+    # ---------------------------------------------------------
+    # 1. Create a reverse mapper (Old Name -> New Name)
+    # ---------------------------------------------------------
+    old_to_new_mapper = {}
+    for new_name, old_names_list in mapping_dict.items():
+        for old_name in old_names_list:
+            old_to_new_mapper[old_name] = new_name
+
+    # ---------------------------------------------------------
+    # 2. Check for missing sectors and add them as 1-to-1 mappings
+    # ---------------------------------------------------------
+    current_sectors = set(IDT_df.columns)
+    mapped_sectors = set(old_to_new_mapper.keys())
+    
+    missing_sectors = current_sectors - mapped_sectors
+    if missing_sectors:
+        print(f"INFO: The following sectors were not in the mapping dictionary and were kept as is: {missing_sectors}")
+        for sector in missing_sectors:
+            old_to_new_mapper[sector] = sector
+
+    # ---------------------------------------------------------
+    # 3. Aggregate IDT (Sum columns, then sum rows)
+    # ---------------------------------------------------------
+    # Sum columns (Demanders) using the Transpose Trick
+    IDT_cols_agg = IDT_df.rename(columns=old_to_new_mapper).T.groupby(level=0).sum().T
+
+    
+    # Sum rows (Suppliers) using the Transpose Trick
+    IDT_agg = IDT_cols_agg.rename(index=old_to_new_mapper).groupby(level=0).sum()
+
+
+
+    # ---------------------------------------------------------
+    # 4. Aggregate IIT (Sum columns, then sum rows)
+    # ---------------------------------------------------------
+    IIT_cols_agg = IIT_df.rename(columns=old_to_new_mapper).T.groupby(level=0).sum().T
+    IIT_agg = IIT_cols_agg.rename(index=old_to_new_mapper).groupby(level=0).sum()
+
+    # ---------------------------------------------------------
+    # 5. Aggregate PI (Only sum columns, leave VA rows alone)
+    # ---------------------------------------------------------
+    PI_agg = PI_df.rename(columns=old_to_new_mapper).T.groupby(level=0).sum().T
+
+    # ---------------------------------------------------------
+    # 6. Aggregate Final Domestic Demand (Only sum rows, don't change columns)
+    # ---------------------------------------------------------
+
+    FDD_agg = FDD_df.rename(index = old_to_new_mapper).groupby(level=0).sum()
+
+    # ---------------------------------------------------------
+    # 6. Aggregate Final Domestic Demand (Only sum rows, don't change columns)
+    # ---------------------------------------------------------
+
+    FDI_agg = FDI_df.rename(index = old_to_new_mapper).groupby(level=0).sum()
+
+    # ---------------------------------------------------------
+    # 6. Aggregate Total Output (1D Series, group by index)
+    # ---------------------------------------------------------
+    if isinstance(total_output, pd.DataFrame):
+        total_output = total_output.squeeze()
+    TO_agg = total_output.rename(index=old_to_new_mapper).groupby(level=0).sum()
+    if isinstance(TO_agg, pd.Series):
+        TO_agg = TO_agg.to_frame(name=total_output.name if hasattr(total_output, "name") else None)
+    # ---------------------------------------------------------
+    # 7. Aggregate Total Imported Output (1D Series, group by index)
+    # ---------------------------------------------------------
+    if isinstance(total_imported_output, pd.DataFrame):
+        total_imported_output = total_imported_output.squeeze()
+    TIO_agg = total_imported_output.rename(index=old_to_new_mapper).groupby(level=0).sum()
+    if isinstance(TIO_agg, pd.Series):
+        TIO_agg = TIO_agg.to_frame(name=total_imported_output.name if hasattr(total_imported_output, "name") else None)
+    # ---------------------------------------------------------
+    # 8. Aggregate Total Input (1D Series, group by index)
+    # ---------------------------------------------------------
+    if isinstance(total_input, pd.DataFrame):
+        total_input = total_input.squeeze()
+    TI_agg = total_input.rename(index=old_to_new_mapper).groupby(level=0).sum()
+    if isinstance(TI_agg, pd.Series):
+        TI_agg = TI_agg.to_frame(name=total_input.name if hasattr(total_input, "name") else None)
+
+
+
+    return IDT_agg, IIT_agg, PI_agg, FDD_agg, FDI_agg, TO_agg, TIO_agg, TI_agg
+
+#%%
 def create_demand_shock(shock_dict, sector_list):
     """
     Converts a dictionary of sector shocks into a properly indexed numpy array.
@@ -92,12 +184,22 @@ def create_demand_shock(shock_dict, sector_list):
     return delta_Y
 
 #%%
-def simulate_demand_shock(L_inverse, delta_Y, A_d, A_m, sector_list, remuneration_array, NPT_array, DFA_array, OS_array, total_value_added_array):
+def simulate_demand_shock(L_inverse, delta_Y, A_d, A_m, sector_list, remuneration_array, NPT_array, DFA_array, OS_array, total_value_added_array, total_output, total_imported_output):
 
     I = np.identity(len(sector_list))
 
     # Calculate the "Deep Supply Chain" matrix: L - I - A
     deep_supply_chain_matrix = L_inverse - I - A_d
+
+    # Prepping total calculations for percentage calculations
+    overall_output = total_output.values.sum()
+    overall_imports = total_imported_output.values.sum()
+    overall_tva = total_value_added_array.sum()
+    overall_remuneration = remuneration_array.sum()
+    overall_NPT = NPT_array.sum()
+    overall_DFA = DFA_array.sum()
+    overall_OS = OS_array.sum()
+    overall_array = np.asarray([overall_output, overall_imports, overall_tva, overall_remuneration, overall_NPT, overall_DFA, overall_OS])
 
     ## ==========================================
     ## 1. TOTAL OUTPUT DECOMPOSITION
@@ -151,13 +253,12 @@ def simulate_demand_shock(L_inverse, delta_Y, A_d, A_m, sector_list, remuneratio
     results_df = pd.concat([
         pd.Series(delta_X_total, index=sector_list, name='Total Output Impact'),
         pd.Series(delta_M_total, index=sector_list, name='Total Import Leakage'),
-        pd.Series(delta_X_total - delta_M_total, index=sector_list, name="Domestic Net Content Impact"),
+        pd.Series(delta_X_total - delta_M_total, index=sector_list, name="Domestic Content Impact"),
         pd.Series(delta_VA_total, index=sector_list, name="Total Change in Value Added"),
         pd.Series(delta_remuneration, index=sector_list, name="Change in Remuneration"),
         pd.Series(delta_NPT, index=sector_list, name="Change in Taxes"),
         pd.Series(delta_DFA, index=sector_list, name="Change in Depreciation"),
-        pd.Series(delta_OS, index=sector_list, name="Change in Operating Surplus")
-        
+        pd.Series(delta_OS, index=sector_list, name = 'Change in Operating Surplus')
     ], axis=1)
     results_df.loc['Total'] = results_df.sum(numeric_only=True)
 
@@ -195,7 +296,37 @@ def simulate_demand_shock(L_inverse, delta_Y, A_d, A_m, sector_list, remuneratio
     ], axis=1)
     direct_indirect_df.loc['Total'] = direct_indirect_df.sum(numeric_only=True)
 
-    return results_df, direct_indirect_df    
+     ## ASSEMBLE PERCENTAGE MAIN DATAFRAME (Clean Summary)
+    ## ==========================================
+
+    # Fix shape mismatch and extract 1D arrays for scalar division
+    tot_out_arr = total_output.iloc[:, 0].to_numpy()
+    tot_imp_arr = total_imported_output.iloc[:, 0].to_numpy()
+
+    results_as_pct_df = pd.concat([
+        # For output and imports, just divide by the total economy baseline
+        pd.Series(100*(delta_X_total / tot_out_arr), index=sector_list, name='Total Output Impact (% Change)'),
+        pd.Series(100*(delta_X_tier1 / tot_out_arr), index=sector_list, name="Output: Direct (Initial Shock)"),
+        pd.Series(100*delta_X_tier2 / tot_out_arr, index=sector_list, name="Output: 1st Wave (Immediate Suppliers)"),
+        pd.Series(100*delta_X_tier3 / tot_out_arr, index=sector_list, name="Output: 2nd+ Wave (Deep Supply Chain)"),
+        # Import Tiers
+        pd.Series(100*delta_M_total / tot_imp_arr, index=sector_list, name='Total Import Leakage (% Change)'),
+        pd.Series(100*delta_M_tier2 / tot_imp_arr, index=sector_list, name="Imports: 1st Wave"),
+        pd.Series(100*delta_M_tier3 / tot_imp_arr, index=sector_list, name="Imports: 2nd+ Wave"),
+    ], axis=1)
+    
+    # Calculate the bottom "Total" row (Total RMB change / Total Baseline Economy)
+    reduced_totals = np.asarray([results_df.at["Total", "Total Output Impact"], direct_indirect_df.at["Total", "Output: Direct (Initial Shock)"], direct_indirect_df.at["Total", "Output: 1st Wave (Immediate Suppliers)"], 
+                                 direct_indirect_df.at["Total", "Output: 2nd+ Wave (Deep Supply Chain)"], results_df.at["Total", "Total Import Leakage"], direct_indirect_df.at["Total", "Imports: 1st Wave"], 
+                                 direct_indirect_df.at["Total", "Imports: 2nd+ Wave"]])
+    #overall_array = np.array([tot_out_arr, tot_imp_arr, tot_tva_arr, remuneration_array.sum(axis=0), NPT_array.sum(axis=0), DFA_array.sum(axis=0), OS_array.sum(axis=0)])
+    results_as_pct_df.loc['Economy Wide % Change'] = 100*(reduced_totals / np.asarray([overall_output, overall_output, overall_output, overall_output, 
+                                                                                overall_imports, overall_imports, overall_imports]))
+
+
+    return results_df, direct_indirect_df, results_as_pct_df    
+
+
 
 
     
@@ -219,10 +350,10 @@ def generate_va_matrices(value_added_df, sector_list):
     DFA_df = pd.DataFrame(DFA_array, index = sector_list, columns = sector_list)
     OS_df = pd.DataFrame(OS_array, index = sector_list, columns = sector_list)
 
-    print(total_value_added_df)
+    #print(total_value_added_df)
 
     for sector in sector_list:
-        print(value_added_df.at["Total Value Added", sector])
+        #print(value_added_df.at["Total Value Added", sector])
         total_value_added_df.at[sector, sector] = value_added_df.at["Total Value Added", sector]
         remuneration_df.at[sector, sector] = value_added_df.at["Remuneration of Employee", sector]
         NPT_df.at[sector, sector] = value_added_df.at["Net Production Tax", sector]
