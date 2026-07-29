@@ -253,7 +253,7 @@ def simulate_demand_shock(L_inverse, delta_Y, A_d, A_m, sector_list, remuneratio
     results_df = pd.concat([
         pd.Series(delta_X_total, index=sector_list, name='Total Output Impact'),
         pd.Series(delta_M_total, index=sector_list, name='Total Import Leakage'),
-        pd.Series(delta_X_total - delta_M_total, index=sector_list, name="Domestic Content Impact"),
+        pd.Series(delta_X_total - delta_M_total, index=sector_list, name="Net Domestic Content Impact"),
         pd.Series(delta_VA_total, index=sector_list, name="Total Change in Value Added"),
         pd.Series(delta_remuneration, index=sector_list, name="Change in Remuneration"),
         pd.Series(delta_NPT, index=sector_list, name="Change in Taxes"),
