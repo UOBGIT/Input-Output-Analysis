@@ -195,8 +195,8 @@ file_path = "Input Output Table.xlsx"
 # Download and Clean Dataframes
 # ==========================================
 
-IDT_df = pd.read_excel(file_path, sheet_name = "1. IDT (Domestic)")
-IIT_df = pd.read_excel(file_path, sheet_name = "2. IIT (Imported)")
+IDT_df = pd.read_excel(file_path, sheet_name = "1. Transactions (Domestic)")
+IIT_df = pd.read_excel(file_path, sheet_name = "2. Transactions (Imported)")
 PI_df = pd.read_excel(file_path, sheet_name = "3. Primary Inputs")
 FDD_df = pd.read_excel(file_path, sheet_name = "4. Final Demand (Domestic)")
 FDI_df = pd.read_excel(file_path, sheet_name = "5. Final Demand (Imported)")
